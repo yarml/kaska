@@ -110,11 +110,11 @@ map_position * map_alloc_position(map *m);
 // Libera los recursos asociados a una posición.
 int map_free_position(map_position *p);
 
-// Crea un iterador asociado al mapa que recorrerá todas las entradas del
-// mapa comenzando por la posición especificada por "p".
-// Obtiene el mutex del mapa, si es que se ha activado esa opción, para que
-// la iteracion se realice en exclusión mutua;
-// es necesario terminar llamando a "map_iter_exit" para liberar ese mutex.
+// Create an iterator associated with the map that will loop through all the entries in the map.
+// map starting at the position specified by "p".
+// Gets the mutex of the map, if that option has been activated, so that
+// the iteration is done in mutual exclusion;
+// you need to end up calling "map_iter_exit" to release that mutex.
 map_iter *map_iter_init(map *m, map_position *p);
 
 // Comprueba si el iterador ha llegado al final
@@ -123,8 +123,8 @@ int map_iter_has_next(map_iter *i);
 // Avanza el iterador
 int map_iter_next(map_iter *i);
 
-// Obtiene clave y valor apuntados por el iterador;
-// si se quiere solo la clave o el valor, especifique NULL en el otro campo
+// Get key and value pointed to by the iterator;
+// if you want just the key or the value, specify NULL in the other field
 int map_iter_value(map_iter *i, const void **key, void **value);
 
 // Destruye un iterador, liberando el mutex.

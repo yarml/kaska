@@ -172,11 +172,10 @@ void *handle_connection(void *parg_thinf)
       {
         // tq is a pointer to the target queue
         result = queue_append(tq, m);
-        if(result < 0)
+        if (result < 0)
         {
           free(msg);
           free(m);
-
         }
       }
       result = htonl(result);
@@ -199,12 +198,12 @@ void *handle_connection(void *parg_thinf)
         goto connection_lost;
       offset = htonl(offset);
 
-      int result;
-
       char *topic = malloc(topic_len);
       if (recv(cfd, topic, topic_len, MSG_WAITALL) <= 0)
         goto connection_lost;
 
+      // Send back result
+      int result;
       int err = 0;
       queue *tq = map_get(topics, topic, &err);
       if (err == -1)
@@ -247,7 +246,60 @@ void *handle_connection(void *parg_thinf)
       free(topic);
       write(cfd, &result, 4);
     }
-      break;
+    break;
+    case OP_POLL:
+    {
+      // The rest of the message, like MSG_LEN
+      // 4 bytes topic len = N
+      // 4 bytes offset
+      // N bytes topic
+      uint32_t topic_len;
+      if (recv(cfd, &topic_len, 4, MSG_WAITALL) <= 0)
+        goto connection_lost;
+      topic_len = ntohl(topic_len);
+      uint32_t offset;
+      if (recv(cfd, &offset, 4, MSG_WAITALL) <= 0)
+        goto connection_lost;
+      offset = htonl(offset);
+
+      char *topic = malloc(topic_len);
+      if (recv(cfd, topic, topic_len, MSG_WAITALL) <= 0)
+        goto connection_lost;
+
+      uint32_t msg_len;
+
+      int err = 0;
+
+      queue *tq = map_get(topics, topic, &err);
+      void *msg;
+
+      if (err == -1)
+        msg_len = 0;
+      else
+      {
+        err = 0;
+        message *m = queue_get(tq, offset, &err);
+
+        if (err)
+          msg_len = 0;
+        else
+        {
+          msg = m->base;
+          msg_len = m->len;
+        }
+      }
+      uint32_t msg_len_net = htonl(msg_len);
+
+      struct iovec iov[2];
+
+      iove_setup(iov, 0, 4, &msg_len_net);
+      iove_setup(iov, 1, msg_len, msg);
+
+      int iov_count = msg_len ? 2 : 1;
+      writev(cfd, iov, iov_count);
+      printf("[%3d] Poll topic_len=%u, offset=%u, topic='%s' => %u\n", cfd, topic_len, offset, topic, msg_len);
+    }
+    break;
     default: // If we receive an invalid opcode, we break the connection
       goto connection_lost;
     }

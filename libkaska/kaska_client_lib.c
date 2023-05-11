@@ -71,13 +71,8 @@ static int ensure_connected()
   return sfd;
 }
 
-static void iove_setup(struct iovec *iov, size_t index, size_t len, void *base)
-{
-  iov[index].iov_base = base;
-  iov[index].iov_len = len;
-}
-
 static map *sm = 0; // subscription map
+static map_position *sm_pos;
 
 // Crea el tema especificado.
 // Devuelve 0 si OK y un valor negativo en caso de error.
@@ -102,11 +97,11 @@ int create_topic(char *topic)
   iove_setup(iov, 1, 4, &topic_len_net);
   iove_setup(iov, 2, topic_len + 1, topic);
 
-  if(writev(sfd, iov, 3) < 0)
+  if (writev(sfd, iov, 3) < 0)
     return -1;
   // Receive response
   uint8_t result;
-  if(recv(sfd, &result, sizeof(result), MSG_WAITALL) <= 0)
+  if (recv(sfd, &result, sizeof(result), MSG_WAITALL) <= 0)
     return -1;
   return -result;
 }
@@ -120,13 +115,13 @@ int ntopics(void)
   /* NTOPICS has the following format */
   //  1 byte: Opcode
   uint8_t op = OP_NTOPICS;
-  if(write(sfd, &op, 1) < 0)
+  if (write(sfd, &op, 1) < 0)
     return -1;
 
   // Receive response
   // 4 bytes: Number of topics (network order)
   uint32_t ntopics_net;
-  if(recv(sfd, &ntopics_net, 4, MSG_WAITALL) <= 0)
+  if (recv(sfd, &ntopics_net, 4, MSG_WAITALL) <= 0)
     return -1;
   uint32_t ntopics = ntohl(ntopics_net);
   return ntopics;
@@ -163,12 +158,12 @@ int send_msg(char *topic, int msg_size, void *msg)
   iove_setup(iov, 3, topic_len + 1, topic);
   iove_setup(iov, 4, msg_size, msg);
 
-  if(writev(sfd, iov, 5) < 0)
+  if (writev(sfd, iov, 5) < 0)
     return -1;
 
   // Receive response
   int result;
-  if(recv(sfd, &result, 4, MSG_WAITALL) <= 0)
+  if (recv(sfd, &result, 4, MSG_WAITALL) <= 0)
     return -1;
   result = ntohl(result);
   return result;
@@ -178,7 +173,7 @@ int send_msg(char *topic, int msg_size, void *msg)
 int msg_length(char *topic, int offset)
 {
   size_t topic_len = strlen(topic);
-  if(topic_len >= 216)
+  if (topic_len >= 216)
     return -1;
 
   int sfd = ensure_connected();
@@ -192,24 +187,25 @@ int msg_length(char *topic, int offset)
   uint8_t op = OP_MSG_LEN;
   uint32_t offset_net = htonl(offset);
 
-  uint32_t topic_len_net = htonl(topic_len+1);
+  uint32_t topic_len_net = htonl(topic_len + 1);
 
   struct iovec iov[4];
 
   iove_setup(iov, 0, 1, &op);
   iove_setup(iov, 1, 4, &topic_len_net);
   iove_setup(iov, 2, 4, &offset_net);
-  iove_setup(iov, 3, topic_len+1, topic);
+  iove_setup(iov, 3, topic_len + 1, topic);
 
-  if(writev(sfd, iov, 4) < 0)
+  if (writev(sfd, iov, 4) < 0)
     return -1;
 
   // Receive response
   // 4 bytes size(network order), negative for error
   int msg_size;
 
-  if(recv(sfd, &msg_size, 4, MSG_WAITALL) <= 0)
-    return -1;;
+  if (recv(sfd, &msg_size, 4, MSG_WAITALL) <= 0)
+    return -1;
+  ;
 
   msg_size = ntohl(msg_size);
 
@@ -222,10 +218,10 @@ int msg_length(char *topic, int offset)
 int end_offset(char *topic)
 {
   size_t topic_len = strlen(topic);
-  if(topic_len >= 216)
+  if (topic_len >= 216)
     return -1;
   int sfd = ensure_connected();
-  if(sfd < 0)
+  if (sfd < 0)
     return -1;
   // END_OFFSET format:
   //  1 byte opcode
@@ -240,14 +236,14 @@ int end_offset(char *topic)
   iove_setup(iov, 1, 4, &topic_len_net);
   iove_setup(iov, 2, topic_len + 1, topic);
 
-  if(writev(sfd, iov, 3) < 0)
+  if (writev(sfd, iov, 3) < 0)
     return -1;
 
   // Receive reponse
   //  4 bytes: end offset, negative if error
   int end_offset;
 
-  if(recv(sfd, &end_offset, 4, MSG_WAITALL) <= 0)
+  if (recv(sfd, &end_offset, 4, MSG_WAITALL) <= 0)
     return -1;
 
   end_offset = ntohl(end_offset);
@@ -264,24 +260,26 @@ int end_offset(char *topic)
 // and a negative value only if you were already subscribed to a topic.
 int subscribe(int ntopics, char **topics)
 {
-  if(sm) // We already subscribed to topics, can't subscribe again
+  if (sm) // We already subscribed to topics, can't subscribe again
     return -1;
   sm = map_create(key_string, 0); // No locking
-
+  sm_pos = map_alloc_position(sm);
   int actually_subs = 0; // Does not count duplicates or non existant
-  for(int i = 0; i < ntopics; ++i)
+  for (int i = 0; i < ntopics; ++i)
   {
+    if (strlen(topics[i]) >= 216) // If too long, don't bother looking it up
+      continue;
     int err = 0;
     // First we check if the topic is already added, if that's the case
     // don't bother asking the broker about its end offset
     map_get(sm, topics[i], &err);
-    if(!err)
+    if (!err)
       continue;
     int eoff = end_offset(topics[i]);
-    if(eoff < 0)
+    if (eoff < 0)
       continue;
     char *dup_topic = strdup(topics[i]); // free() in release_subscription
-    int *poff = malloc(sizeof(int)); // free() in release_subscription
+    int *poff = malloc(sizeof(int));     // free() in release_subscription
     *poff = eoff;
     map_put(sm, dup_topic, poff);
     ++actually_subs;
@@ -299,8 +297,9 @@ static void release_subscription(void *key, void *value)
 // Devuelve 0 si OK y un valor negativo si no había suscripciones activas.
 int unsubscribe(void)
 {
-  if(!sm) // Can't unsubscribe if not subscribed already :)
+  if (!sm) // Can't unsubscribe if not subscribed already :)
     return -1;
+  map_free_position(sm_pos);
   map_destroy(sm, release_subscription);
   sm = 0; // subscribe can be called again
   return 0;
@@ -310,11 +309,11 @@ int unsubscribe(void)
 // caso de error.
 int position(char *topic)
 {
-  if(!sm)
+  if (!sm)
     return -1;
   int err = 0;
   int *poff = map_get(sm, topic, &err);
-  if(err)
+  if (err)
     return -1;
   return *poff;
 }
@@ -323,11 +322,11 @@ int position(char *topic)
 // Devuelve 0 si OK y un número negativo en caso de error.
 int seek(char *topic, int offset)
 {
-  if(!sm)
+  if (!sm)
     return -1;
   int err = 0;
   int *poff = map_get(sm, topic, &err);
-  if(err)
+  if (err)
     return -1;
   *poff = offset;
   return 0;
@@ -335,12 +334,78 @@ int seek(char *topic, int offset)
 
 // CUARTA FASE: LEER MENSAJES
 
-// Obtiene el siguiente mensaje destinado a este cliente; los dos parámetros
-// son de salida.
-// Devuelve el tamaño del mensaje (0 si no había mensaje)
-// y un número negativo en caso de error.
+// Get the following message for this client; the two parameters
+// are output.
+// Returns the size of the message (0 if there was no message)
+// and a negative number on error.
 int poll(char **topic, void **msg)
 {
+  if (!sm)
+    return -1;
+  int sfd = ensure_connected();
+  map_iter *it = map_iter_init(sm, sm_pos);
+  for (; it && map_iter_has_next(it); map_iter_next(it))
+  {
+    char *ctopic;
+    int *poff;
+    map_iter_value(it, (void const **) &ctopic, (void **) &poff);
+
+    // Send a poll request
+    // POLL format:
+    //  1 byte: opcode
+    //  4 bytes: topic len = N
+    //  4 bytes: offset
+    //  N bytes: topic(with NULL term)
+
+    uint8_t op = OP_POLL;
+    size_t ctopic_len = strlen(ctopic);
+
+    uint32_t topic_len_net = htonl(ctopic_len+1);
+    uint32_t offset_net = htonl(*poff);
+
+    struct iovec iov[4];
+
+    iove_setup(iov, 0, 1, &op);
+    iove_setup(iov, 1, 4, &topic_len_net);
+    iove_setup(iov, 2, 4, &offset_net);
+    iove_setup(iov, 3, ctopic_len + 1, ctopic);
+
+    if (writev(sfd, iov, 4) < 0)
+    {
+      sm_pos = map_iter_exit(it);
+      return -1;
+    }
+
+    // broker response is of the format:
+    // 4 bytes: msg len, 0 means message at offset for topic does not exist = N
+    // N bytes: msg
+    uint32_t msg_len;
+    if (recv(sfd, &msg_len, 4, MSG_WAITALL) <= 0)
+    {
+      sm_pos = map_iter_exit(it);
+      return -1;
+    }
+    msg_len = ntohl(msg_len);
+
+    printf("Receiving a message of length: %u\n", msg_len);
+
+    if (!msg_len)
+      continue;
+    void *msgbuf = malloc(msg_len);
+    if (recv(sfd, msgbuf, msg_len, MSG_WAITALL) <= 0)
+    {
+      free(msgbuf);
+      sm_pos = map_iter_exit(it);
+      return -1;
+    }
+    *topic = strdup(ctopic);
+    *msg = msgbuf;
+    ++*poff; // Increment offset so that next time we read from this topic
+             // We read the next message from the broker
+    sm_pos = map_iter_exit(it);
+    return msg_len;
+  }
+  sm_pos = map_iter_exit(it);
   return 0;
 }
 
