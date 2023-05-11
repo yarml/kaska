@@ -76,3 +76,29 @@ satisfied by the developed practice:
   and a type which manages an append-only queue are provided. It is mandatory
   to use these types of data when implementing the practice.
 
+
+# Phase 3 (2 points): Subscription
+All code developed in this class corresponds to the client library. It is
+necessary to include in it a map that allows to associate the subscribed topics
+with their local offsets. Not being a multithread library does not need to
+enable internal map synchronization.
+
+# subscribe function
+You must create the map of subscribed topics. Remember that it does not have an
+incremental mode of operation: it fails if a map already exists. For each topic
+to subscribe, directly use the function end_offset to check that it exists and
+know its current offset, which will be the one stored in the new entry that is
+added to the map. Note that the client does not have access initially to
+previous messages. Note that in this function we have to break the zerocopy
+strategy since we cannot add a reference to the received theme name in the map
+as a parameter since the application can reuse it. The strdup function can be
+used to create a duplicate and insert a reference to it into the map.
+
+# unsubscribe function
+Frees the topic map, giving an error if it didn't exist previously.
+
+# position function
+Gets the local offset associated with the specified topic using map_get to access it.
+
+# seek function
+Updates the local offset associated with the specified topic using map_get to access it.

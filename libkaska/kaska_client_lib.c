@@ -77,6 +77,8 @@ static void iove_setup(struct iovec *iov, size_t index, size_t len, void *base)
   iov[index].iov_len = len;
 }
 
+static map *sm = 0; // subscription map
+
 // Crea el tema especificado.
 // Devuelve 0 si OK y un valor negativo en caso de error.
 int create_topic(char *topic)
@@ -255,20 +257,52 @@ int end_offset(char *topic)
 
 // TERCERA FASE: SUBSCRIPCIÓN
 
-// Se suscribe al conjunto de temas recibidos. No permite suscripción
-// incremental: hay que especificar todos los temas de una vez.
-// Si un tema no existe o está repetido en la lista simplemente se ignora.
-// Devuelve el número de temas a los que realmente se ha suscrito
-// y un valor negativo solo si ya estaba suscrito a algún tema.
+// Subscribe to the set of received topics. does not allow subscription
+// incremental: all themes must be specified at once.
+// If a topic does not exist or is repeated in the list, it is simply ignored.
+// Returns the number of topics actually subscribed to
+// and a negative value only if you were already subscribed to a topic.
 int subscribe(int ntopics, char **topics)
 {
-  return 0;
+  if(sm) // We already subscribed to topics, can't subscribe again
+    return -1;
+  sm = map_create(key_string, 0); // No locking
+
+  int actually_subs = 0; // Does not count duplicates or non existant
+  for(int i = 0; i < ntopics; ++i)
+  {
+    int err = 0;
+    // First we check if the topic is already added, if that's the case
+    // don't bother asking the broker about its end offset
+    map_get(sm, topics[i], &err);
+    if(!err)
+      continue;
+    int eoff = end_offset(topics[i]);
+    if(eoff < 0)
+      continue;
+    char *dup_topic = strdup(topics[i]); // free() in release_subscription
+    int *poff = malloc(sizeof(int)); // free() in release_subscription
+    *poff = eoff;
+    map_put(sm, dup_topic, poff);
+    ++actually_subs;
+  }
+  return actually_subs;
+}
+
+static void release_subscription(void *key, void *value)
+{
+  free(value);
+  free(key);
 }
 
 // Se da de baja de todos los temas suscritos.
 // Devuelve 0 si OK y un valor negativo si no había suscripciones activas.
 int unsubscribe(void)
 {
+  if(!sm) // Can't unsubscribe if not subscribed already :)
+    return -1;
+  map_destroy(sm, release_subscription);
+  sm = 0; // subscribe can be called again
   return 0;
 }
 
@@ -276,13 +310,26 @@ int unsubscribe(void)
 // caso de error.
 int position(char *topic)
 {
-  return 0;
+  if(!sm)
+    return -1;
+  int err = 0;
+  int *poff = map_get(sm, topic, &err);
+  if(err)
+    return -1;
+  return *poff;
 }
 
 // Modifica el offset del cliente para ese tema.
 // Devuelve 0 si OK y un número negativo en caso de error.
 int seek(char *topic, int offset)
 {
+  if(!sm)
+    return -1;
+  int err = 0;
+  int *poff = map_get(sm, topic, &err);
+  if(err)
+    return -1;
+  *poff = offset;
   return 0;
 }
 
