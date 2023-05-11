@@ -413,14 +413,103 @@ int poll(char **topic, void **msg)
 
 // Cliente guarda el offset especificado para ese tema.
 // Devuelve 0 si OK y un número negativo en caso de error.
+
+// In the library, you would need to send 2 strings: the client and the topic,
+// along with the operation code and the offset. As for the broker, you would
+// need to create the corresponding subdirectory for the client and the
+// associated file for the topic if they don't already exist, and write the
+// offset to the file.
+
 int commit(char *client, char *topic, int offset)
 {
-  return 0;
+  size_t topic_len = strlen(topic);
+  size_t client_len = strlen(client);
+  if(topic_len >= 216)
+    return -1;
+
+  // The broker would reject these anyway, so don't bother sending the request
+  if(client[0] == '.' || strchr(client, '/'))
+    return -1;
+
+  int sfd = ensure_connected();
+  if(sfd < 0)
+    return -1;
+
+  // COMMIT op format
+  //  1 byte: opcode
+  //  4 bytes: topic len = N
+  //  4 bytes: client len = M
+  //  4 bytes: offset
+  //  N bytes: topic (with Null term)
+  //  M bytes: client(with Null term)
+
+  uint8_t op = OP_COMMIT;
+  uint32_t topic_len_net = htonl(topic_len);
+  uint32_t client_len_net = htonl(client_len);
+  uint32_t offset_net = htonl(offset);
+
+  struct iovec iov[6];
+
+  iove_setup(iov, 0, 1, &op);
+  iove_setup(iov, 1, 4, &topic_len_net);
+  iove_setup(iov, 2, 4, &client_len_net);
+  iove_setup(iov, 3, 4, &offset_net);
+  iove_setup(iov, 4, topic_len+1, topic);
+  iove_setup(iov, 5, client_len+1, client);
+
+  if(writev(sfd, iov, 6) < 0);
+    return -1;
+
+  // Response is just one byte status
+  uint8_t status;
+  if(recv(sfd, &status, 1, MSG_WAITALL) <= 0)
+    return -1;
+  return status;
 }
 
 // Cliente obtiene el offset guardado para ese tema.
 // Devuelve el offset y un número negativo en caso de error.
 int commited(char *client, char *topic)
 {
-  return 0;
+  size_t topic_len = strlen(topic);
+  size_t client_len = strlen(client);
+  if(topic_len >= 216)
+    return -1;
+
+  // The broker would reject these anyway, so don't bother sending the request
+  if(client[0] == '.' || strchr(client, '/'))
+    return -1;
+
+  int sfd = ensure_connected();
+  if(sfd < 0)
+    return -1;
+
+  // COMMITED op format
+  //  1 byte: opcode
+  //  4 bytes: topic len = N
+  //  4 bytes: client len = M
+  //  N bytes: topic (with Null term)
+  //  M bytes: client(with Null term)
+
+  uint8_t op = OP_COMMIT;
+  uint32_t topic_len_net = htonl(topic_len);
+  uint32_t client_len_net = htonl(client_len);
+
+  struct iovec iov[5];
+
+  iove_setup(iov, 0, 1, &op);
+  iove_setup(iov, 1, 4, &topic_len_net);
+  iove_setup(iov, 2, 4, &client_len_net);
+  iove_setup(iov, 3, topic_len+1, topic);
+  iove_setup(iov, 4, client_len+1, client);
+
+  if(writev(sfd, iov, 5) < 0);
+    return -1;
+
+  // Response is just 4 bytes offset, negative if error
+  int offset;
+  if(recv(sfd, &offset, 4, MSG_WAITALL) <= 0)
+    return -1;
+  offset = ntohl(offset);
+  return offset;
 }

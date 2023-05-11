@@ -18,6 +18,9 @@
 
 #define OP_POLL (0x40)
 
+#define OP_COMMIT (0x50)
+#define OP_COMMITED (0x51)
+
 // Create Topic result codes
 #define OP_CT_SUCCESS (0)
 #define OP_CT_EXISTS (1) // topic already exists

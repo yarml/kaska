@@ -102,3 +102,38 @@ Gets the local offset associated with the specified topic using map_get to acces
 
 # seek function
 Updates the local offset associated with the specified topic using map_get to access it.
+
+
+# Phase 5
+Making an offset persistent allows clients to continue processing messages from
+where they left off after a voluntary or involuntary restart. Allowing the
+application to control when an offset is persisted enables the application to
+manage its error handling model according to its needs.
+
+For example, one approach is to persist the offset as soon as the message is
+read. However, if the application crashes at that moment, the message will
+remain unprocessed.
+
+Another option is to persist the offset after processing the message. In this
+case, if the application crashes after processing the message but before
+persisting its offset, it will process the same message again upon resuming
+execution.
+
+If the offset is stored in the broker's memory, it can be maintained even if the
+client crashes, but it will not survive a broker crash. Kafka solves this
+problem through two complementary methods: replicating and storing all the
+information, including offsets and messages, on disk. Note that saving offsets
+to disk alone would not be sufficient without also storing the messages.
+
+However, in practice, persisting messages on disk can be challenging (a possible
+solution could be proposed if someone is interested). Therefore, in this last
+phase, we will settle for saving the offsets provided by the clients on the disk
+of the machine where the broker is running.
+
+During this phase, the test program will receive a client identifier as an
+argument, which will link successive executions of the same application.
+Similarly, the broker will receive the name of a pre-existing directory as its
+second argument, where the offsets will be stored. Within that directory, a
+subdirectory will be created for each client that has ever saved an offset,
+named after the client. The offsets themselves will be stored in files within
+their respective subdirectories, using the name of the topic.
