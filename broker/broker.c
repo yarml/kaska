@@ -1,18 +1,20 @@
 #include <pthread.h>
+#include <dirent.h>
+#include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdio.h>
-#include <string.h>
 
-#include <sys/uio.h>
-#include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/uio.h>
 
 #include <netinet/in.h>
 
 #include "comun.h"
-#include "map.h"
 #include "queue.h"
+#include "map.h"
 
 #define BACKLOG (5)
 
@@ -21,6 +23,7 @@ struct THREAD_INFO
 {
   int cfd;
   map *topics;
+  char *dir_commit;
 };
 
 typedef struct MESSAGE message;
@@ -82,11 +85,55 @@ static int init_server(int port)
   return sfd;
 }
 
+// Lock for the commit directory
+// We don't want two threads to access it at the same time
+// It probably won't cause problems most of the time
+// But if both happen to access the same client/topic, then
+// there is going to be problems, and we don't want them
+pthread_mutex_t dir_commit_lock;
+
+static FILE *open_commit_file(
+    char *dir_commit,
+    char *client,
+    char *topic,
+    char *mode)
+{
+  // We need to join th three parameters with '/'
+  size_t dc_len = strlen(dir_commit);
+  size_t client_len = strlen(client);
+  size_t topic_len = strlen(topic);
+  char path[dc_len + client_len + topic_len + 2 + 1]; // + 2 '/' + 1 NULL term
+
+  strcpy(path, dir_commit);
+  strcat(path, "/");
+  strcat(path, client);
+  strcat(path, "/");
+
+  // path is now the path of the directory of the client
+  DIR *dc = opendir(path);
+
+  if (!dc)
+  {
+    // Directory does not exist, we need to make it
+    if (mkdir(path, 0700) < 0)
+      return 0;
+  }
+  else
+    closedir(dc);
+
+  // We are sure the client dir exists
+  strcat(path, topic);
+
+  FILE *f = fopen(path, mode);
+  return f;
+}
+
 void *handle_connection(void *parg_thinf)
 {
   thread_info *thinf = parg_thinf;
   int cfd = thinf->cfd;
   map *topics = thinf->topics;
+  char *dir_commit = thinf->dir_commit;
 
   printf("[%3d] Connection opened\n", cfd);
 
@@ -298,6 +345,129 @@ void *handle_connection(void *parg_thinf)
       int iov_count = msg_len ? 2 : 1;
       writev(cfd, iov, iov_count);
       printf("[%3d] Poll topic_len=%u, offset=%u, topic='%s' => %u\n", cfd, topic_len, offset, topic, msg_len);
+      free(topic);
+    }
+    break;
+    case OP_COMMIT:
+    {
+      uint32_t topic_len;
+      if (recv(cfd, &topic_len, 4, MSG_WAITALL) <= 0)
+        goto connection_lost;
+      topic_len = ntohl(topic_len);
+
+      uint32_t client_len;
+      if (recv(cfd, &client_len, 4, MSG_WAITALL) <= 0)
+        goto connection_lost;
+      client_len = ntohl(client_len);
+
+      uint32_t offset;
+      if (recv(cfd, &offset, 4, MSG_WAITALL) <= 0)
+        goto connection_lost;
+      offset = ntohl(offset);
+
+      char *topic = malloc(topic_len);
+      char *client = malloc(client_len);
+
+      if (recv(cfd, topic, topic_len, MSG_WAITALL) <= 0)
+      {
+        free(topic);
+        free(client);
+        goto connection_lost;
+      }
+
+      if (recv(cfd, client, client_len, MSG_WAITALL) <= 0)
+      {
+        free(topic);
+        free(client);
+        goto connection_lost;
+      }
+
+      // End receive
+
+      int8_t result;
+
+      if (!client_len ||
+          !topic_len ||
+          client[0] == '.' ||
+          topic[0] == '.' ||
+          strchr(client, '/') ||
+          strchr(topic, '/'))
+        result = -1;
+      else
+      {
+        pthread_mutex_lock(&dir_commit_lock);
+        FILE *target_file = open_commit_file(dir_commit, client, topic, "w");
+        if (target_file)
+        {
+          fprintf(target_file, "%u", offset);
+          fclose(target_file);
+          result = 0;
+        }
+        else
+          result = -2;
+        pthread_mutex_unlock(&dir_commit_lock);
+      }
+      free(topic);
+      free(client);
+      write(cfd, &result, 1);
+    }
+    break;
+    case OP_COMMITED:
+    {
+      uint32_t topic_len;
+      if (recv(cfd, &topic_len, 4, MSG_WAITALL) <= 0)
+        goto connection_lost;
+      topic_len = ntohl(topic_len);
+
+      uint32_t client_len;
+      if (recv(cfd, &client_len, 4, MSG_WAITALL) <= 0)
+        goto connection_lost;
+      client_len = ntohl(client_len);
+
+      char *topic = malloc(topic_len);
+      char *client = malloc(client_len);
+
+      if (recv(cfd, topic, topic_len, MSG_WAITALL) <= 0)
+      {
+        free(topic);
+        free(client);
+        goto connection_lost;
+      }
+
+      if (recv(cfd, client, client_len, MSG_WAITALL) <= 0)
+      {
+        free(topic);
+        free(client);
+        goto connection_lost;
+      }
+
+      // End receive
+      int32_t result;
+
+      if (!client_len ||
+          !topic_len ||
+          client[0] == '.' ||
+          topic[0] == '.' ||
+          strchr(client, '/') ||
+          strchr(topic, '/'))
+        result = -1;
+      else
+      {
+        pthread_mutex_lock(&dir_commit_lock);
+        FILE *target_file = open_commit_file(dir_commit, client, topic, "r");
+        if (target_file)
+        {
+          fscanf(target_file, "%d", &result);
+          fclose(target_file);
+        }
+        else
+          result = -2;
+        pthread_mutex_unlock(&dir_commit_lock);
+      }
+      free(topic);
+      free(client);
+      result = htonl(result);
+      write(cfd, &result, 4);
     }
     break;
     default: // If we receive an invalid opcode, we break the connection
@@ -331,6 +501,20 @@ int main(int argc, char **argv)
     fprintf(stderr, "Usage: %s port [dir_commited]\n", argv[0]);
     return 1;
   }
+
+  char *dir_commit;
+  if (argc == 3)
+    dir_commit = argv[2];
+  else
+    dir_commit = "commits";
+
+  DIR *commitdir = opendir(dir_commit);
+  if (!commitdir)
+  {
+    perror("opendir");
+    exit(-6);
+  }
+  closedir(commitdir);
 
   int port = atoi(argv[1]);
 
@@ -407,6 +591,7 @@ int main(int argc, char **argv)
     }
     thinf->cfd = cfd;
     thinf->topics = topics;
+    thinf->dir_commit = dir_commit;
 
     status = pthread_create(&cthid, &cth_attrib, handle_connection, thinf);
     if (status)

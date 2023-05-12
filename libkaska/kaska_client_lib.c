@@ -444,8 +444,8 @@ int commit(char *client, char *topic, int offset)
   //  M bytes: client(with Null term)
 
   uint8_t op = OP_COMMIT;
-  uint32_t topic_len_net = htonl(topic_len);
-  uint32_t client_len_net = htonl(client_len);
+  uint32_t topic_len_net = htonl(topic_len+1);
+  uint32_t client_len_net = htonl(client_len+1);
   uint32_t offset_net = htonl(offset);
 
   struct iovec iov[6];
@@ -457,7 +457,7 @@ int commit(char *client, char *topic, int offset)
   iove_setup(iov, 4, topic_len+1, topic);
   iove_setup(iov, 5, client_len+1, client);
 
-  if(writev(sfd, iov, 6) < 0);
+  if(writev(sfd, iov, 6) < 0)
     return -1;
 
   // Response is just one byte status
@@ -491,9 +491,9 @@ int commited(char *client, char *topic)
   //  N bytes: topic (with Null term)
   //  M bytes: client(with Null term)
 
-  uint8_t op = OP_COMMIT;
-  uint32_t topic_len_net = htonl(topic_len);
-  uint32_t client_len_net = htonl(client_len);
+  uint8_t op = OP_COMMITED;
+  uint32_t topic_len_net = htonl(topic_len+1);
+  uint32_t client_len_net = htonl(client_len+1);
 
   struct iovec iov[5];
 
@@ -503,7 +503,7 @@ int commited(char *client, char *topic)
   iove_setup(iov, 3, topic_len+1, topic);
   iove_setup(iov, 4, client_len+1, client);
 
-  if(writev(sfd, iov, 5) < 0);
+  if(writev(sfd, iov, 5) < 0)
     return -1;
 
   // Response is just 4 bytes offset, negative if error
